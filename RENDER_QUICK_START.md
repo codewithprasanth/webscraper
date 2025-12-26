@@ -39,15 +39,18 @@ git push
 4. **Add Environment Variables**:
    ```
    WHATSAPP_PHONE_NUMBER=917200632341@c.us
-   NODE_ENV=production
+   TARGET_URL=https://roobai.com/
+   SCRAPE_INTERVAL=30000
+   MIN_DISCOUNT_PERCENTAGE=80
+   PRODUCT_KEYWORDS=
    SERVER_PORT=10000
+   NODE_ENV=production
+   DEBUG_MODE=false
    ```
 
-5. **Add Persistent Disk** (critical for session):
-   - Mount: `/var/lib/roobai`
-   - Size: 1 GB
+5. **Deploy**: Click "Create Web Service"
 
-6. **Deploy**: Click "Create Web Service"
+**Note**: Free tier doesn't need persistent disk. Your session (`.wwebjs_auth`) is stored in git and restored on each deployment.
 
 ### Phase 3: Keep It Running (Optional for Free Tier)
 

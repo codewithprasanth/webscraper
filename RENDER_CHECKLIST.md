@@ -55,14 +55,7 @@ NODE_ENV=production
 DEBUG_MODE=false
 ```
 
-### Step 4: Configure Persistent Storage
-- [ ] Go to **Disks** tab in your service settings
-- [ ] Click **Add Disk**
-  - **Mount Path**: `/var/lib/roobai`
-  - **Size**: 1 GB (minimum, for session storage)
-- [ ] Click **Save**
-
-### Step 5: Deploy
+### Step 4: Deploy
 - [ ] Click **Create Web Service**
 - [ ] Wait for build to complete (2-5 minutes)
 - [ ] Check **Logs** for "✓ WhatsApp client is ready!"

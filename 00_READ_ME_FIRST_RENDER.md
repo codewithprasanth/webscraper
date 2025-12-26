@@ -8,10 +8,9 @@
 ## What Has Been Done
 
 ### ✅ Code Updates
-- Updated `src/main.ts` for Render persistent storage at `/var/lib/roobai/.wwebjs_auth`
-- Added QR code file saving functionality for debugging
+- Updated `src/main.ts` for free tier (git-based session storage)
 - All TypeScript code compiles without errors
-- Fully backward compatible with local development
+- Completely FREE - no paid persistent disk needed!
 
 ### ✅ Configuration Files Created
 1. **Procfile** - Tells Render how to start your app (`npm run start`)
@@ -44,17 +43,19 @@
 
 ### Problem 2: Continuous 24/7 Running ✅ SOLVED
 **Challenge**: Free tier suspends after 15 minutes of inactivity
-**Solutions Provided**:
-- **Option A**: UptimeRobot (free) pings `/status` every 10 min
-- **Option B**: Upgrade to Starter plan ($7/month) for always-on
-- Both options fully documented
+**Solution**:
+- Use free UptimeRobot service
+- Pings `/status` endpoint every 10 minutes
+- Keeps service awake 24/7
+- Cost: $0/month ✅
 
 ### Problem 3: Session Persistence After Restart ✅ SOLVED
-**Challenge**: WhatsApp session lost on restart without persistent storage
+**Challenge**: WhatsApp session lost on restart
 **Solution**:
-- Add Render persistent disk at `/var/lib/roobai` (1 GB)
-- Session survives restarts and weekly Render resets
-- Automatic handling in updated `main.ts`
+- Session stored in `.wwebjs_auth` folder (in git)
+- Rendered automatically restores from git on deploy
+- No paid persistent disk needed! ✅
+- Cost: $0/month
 
 ---
 
@@ -86,8 +87,7 @@ git push origin main
    - Build: `npm install && npm run build`
    - Start: `npm run start`
 4. Add environment variables (see RENDER_CHECKLIST.md)
-5. Add persistent disk: `/var/lib/roobai` (1GB)
-6. Deploy!
+5. Deploy! (No persistent disk needed for free tier)
 
 ---
 

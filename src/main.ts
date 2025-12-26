@@ -1,19 +1,12 @@
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
-import * as fs from 'fs';
-import * as path from 'path';
 import { config } from './config';
 
 const initWhatsapp = async (): Promise<Client> => {
-  // Use persistent storage path on Render
-  const authPath = process.env.NODE_ENV === 'production'
-    ? '/var/lib/roobai/.wwebjs_auth'
-    : './.wwebjs_auth';
-
+  // Free tier: session stored in .wwebjs_auth (git-backed)
+  // On Render, git restores the session automatically
   const whatsappClient = new Client({
-    authStrategy: new LocalAuth({
-      dataPath: authPath,
-    }),
+    authStrategy: new LocalAuth(),
     webVersionCache: {
       type: 'remote',
       remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
@@ -26,19 +19,6 @@ const initWhatsapp = async (): Promise<Client> => {
     console.log('QR CODE RECEIVED - Scan with WhatsApp');
     console.log('========================================\n');
     qrcode.generate(qr, { small: true });
-    
-    // Save QR to file for debugging
-    try {
-      const qrDir = path.dirname(authPath);
-      if (!fs.existsSync(qrDir)) {
-        fs.mkdirSync(qrDir, { recursive: true });
-      }
-      const qrPath = path.join(qrDir, 'qr_code.txt');
-      fs.writeFileSync(qrPath, qr);
-      console.log(`ℹ️  QR Code saved to: ${qrPath}`);
-    } catch (err) {
-      console.error('Failed to save QR code:', err);
-    }
   });
 
   // Message handler for commands
