@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: roobai-whatsapp-scraper
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEBUG_MODE
+        value: false
+      - key: WHATSAPP_PHONE_NUMBER
+        sync: false
+      - key: MIN_DISCOUNT_PERCENTAGE
+        value: 80
+      - key: PRODUCT_KEYWORDS
+        value: ""
+      - key: SCRAPE_INTERVAL
+        value: 30000

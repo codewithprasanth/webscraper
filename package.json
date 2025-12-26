@@ -1,0 +1,26 @@
+{
+  "name": "roobai-whatsapp-scraper",
+  "version": "1.0.0",
+  "description": "Auto webscraper for roobai.com with WhatsApp notifications for offers",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "express": "^4.21.0",
+    "puppeteer": "^21.6.1",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "ts-node": "^10.9.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0"
+  }
+}
