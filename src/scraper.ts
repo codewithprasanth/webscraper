@@ -25,11 +25,23 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
     // DEBUG: Track navigation start time for performance monitoring
     const navStartTime = Date.now();
     
-    // Navigate to the page - use 'domcontentloaded' instead of 'networkidle' for faster loading
-    // domcontentloaded fires when DOM is ready, without waiting for all resources
+    // Set extra headers to look like real browser
+    await page.setExtraHTTPHeaders({
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Cache-Control': 'max-age=0',
+    });
+    
+    // Navigate to the page with extended timeout for Render.com compatibility
+    // Using 'domcontentloaded' instead of 'networkidle' for faster loading
     await page.goto(config.TARGET_URL, {
       waitUntil: 'domcontentloaded',
-      timeout: 30000, // Increased timeout to 30 seconds
+      timeout: 90000, // Extended to 90 seconds for Render.com browser startup + network latency
     });
     
     // DEBUG: Log navigation time
@@ -44,7 +56,7 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
 
     // DEBUG: Wait for JavaScript to render products with monitoring
     const renderStartTime = Date.now();
-    await page.waitForTimeout(3000); // Increased wait time for JS rendering
+    await page.waitForTimeout(5000); // Increased wait time for JS rendering (5 seconds)
     const renderDuration = Date.now() - renderStartTime;
     
     if (config.DEBUG_MODE) {
@@ -220,6 +232,17 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--single-process',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-web-resources',
+        '--disable-background-networking',
+        '--disable-breakpad',
+        '--disable-client-side-phishing-detection',
+        '--disable-component-extensions-with-background-pages',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-popup-blocking',
+        '--no-default-browser-check',
+        '--no-first-run',
       ],
     });
     
@@ -227,6 +250,32 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
 
     if (config.DEBUG_MODE) {
       console.log('[Scraper] Browser launched successfully');
+    }
+    
+    // Set up request interception to block heavy resources and speed up loading
+    await page.route('**/*', (route) => {
+      const request = route.request();
+      const resourceType = request.resourceType();
+      
+      // Block images, stylesheets, fonts, and media to speed up page load
+      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+        route.abort();
+      } else if (
+        request.url().includes('google-analytics') ||
+        request.url().includes('doubleclick') ||
+        request.url().includes('facebook.com') ||
+        request.url().includes('analytics') ||
+        request.url().includes('ads')
+      ) {
+        // Block tracking and ad requests
+        route.abort();
+      } else {
+        route.continue();
+      }
+    });
+
+    if (config.DEBUG_MODE) {
+      console.log('[Scraper] Request interception configured - blocking heavy resources');
     }
 
     // Infinite scraping loop
@@ -278,8 +327,10 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
             retries++;
             
             if (retries < maxRetries) {
-              console.log(`[Scraper] Retrying in 5 seconds...`);
-              await wait(5000);
+              // Exponential backoff: 10s, 20s, 30s
+              const waitTime = 10000 * retries;
+              console.log(`[Scraper] Retrying in ${waitTime}ms...`);
+              await wait(waitTime);
             }
           }
         }
