@@ -281,7 +281,47 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     // Infinite scraping loop
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      // FIX: Close old page and create fresh one to avoid stale state and memory leaks
+      if (page) {
+        try {
+          await page.close();
+          if (config.DEBUG_MODE) {
+            console.log('[Scraper] Previous page closed to prevent memory leaks');
+          }
+        } catch (e) {
+          // Ignore errors on close
+        }
+      }
+      
       try {
+        // Create fresh page for this cycle
+        page = await browser.newPage();
+        
+        // Clear storage to avoid stale state
+        await page.context().clearCookies();
+        
+        // Set up request interception again for new page
+        await page.route('**/*', (route) => {
+          const request = route.request();
+          const resourceType = request.resourceType();
+          
+          if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+            route.abort();
+          } else if (
+            request.url().includes('google-analytics') ||
+            request.url().includes('doubleclick') ||
+            request.url().includes('facebook.com')
+          ) {
+            route.abort();
+          } else {
+            route.continue();
+          }
+        });
+        
+        if (config.DEBUG_MODE) {
+          console.log('[Scraper] Fresh page created for this cycle');
+        }
+        
         let retries = 0;
         const maxRetries = 3;
         let products: Product[] = [];
@@ -355,32 +395,36 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
               const message = formatProductMessage(product);
 
               // DEBUG: Try to send with image and track result
+              let imageSent = false;
               if (product.imageUrl && product.imageUrl !== 'N/A') {
                 try {
                   if (config.DEBUG_MODE) {
-                    console.log(`[Message] Loading image from: ${product.imageUrl}`);
+                    console.log(`[Message] Downloading image from: ${product.imageUrl}`);
                   }
-                  const media = await MessageMedia.fromUrl(product.imageUrl);
-                  await whatsappClient.sendMessage(
-                    config.WHATSAPP_PHONE_NUMBER,
-                    media,
-                    { caption: message }
-                  );
-                  sentCount++;
-                  console.log(`✓ Sent with image: ${product.title}`);
+                  const response = await fetch(product.imageUrl, { timeout: 15000 } as any);
+                  if (response.ok) {
+                    const buffer = await response.arrayBuffer();
+                    const base64 = Buffer.from(buffer).toString('base64');
+                    const media = new MessageMedia('image/jpeg', base64);
+                    await whatsappClient.sendMessage(
+                      config.WHATSAPP_PHONE_NUMBER,
+                      media,
+                      { caption: message }
+                    );
+                    imageSent = true;
+                    sentCount++;
+                    console.log(`✓ Sent with image: ${product.title}`);
+                  }
                 } catch (imgErr) {
-                  // DEBUG: Fallback to text-only if image fails
                   const imgErrMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
-                  console.warn(`[Message] Image load failed, falling back to text: ${imgErrMsg}`);
-                  await whatsappClient.sendMessage(config.WHATSAPP_PHONE_NUMBER, message);
-                  sentCount++;
-                  console.log(`✓ Sent (text): ${product.title}`);
+                  if (config.DEBUG_MODE) {
+                    console.warn(`[Message] Image error: ${imgErrMsg}`);
+                  }
                 }
-              } else {
-                // DEBUG: Send text-only message (no image URL)
-                if (config.DEBUG_MODE) {
-                  console.log(`[Message] No image available, sending text only`);
-                }
+              }
+              
+              // Send text if image was not sent
+              if (!imageSent) {
                 await whatsappClient.sendMessage(config.WHATSAPP_PHONE_NUMBER, message);
                 sentCount++;
                 console.log(`✓ Sent (text): ${product.title}`);
@@ -420,6 +464,17 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
         if (config.DEBUG_MODE && err instanceof Error) {
           console.error('[Scraper] Stack trace:', err.stack);
         }
+        
+        // FIX: Close page on error to prevent memory leak
+        if (page) {
+          try {
+            await page.close();
+            page = null;
+          } catch (e) {
+            page = null;
+          }
+        }
+        
         console.log('⏳ Retrying main loop in 5 seconds...');
         await wait(5000);
       }
