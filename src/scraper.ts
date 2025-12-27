@@ -184,7 +184,13 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     
     browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--single-process',
+      ],
     });
     
     page = await browser.newPage();
