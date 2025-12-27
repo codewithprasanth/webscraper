@@ -22,39 +22,58 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
       console.log('[Scraper] Loading page with Playwright...');
     }
 
-    // Navigate to the page and wait for network to be idle
+    // DEBUG: Track navigation start time for performance monitoring
+    const navStartTime = Date.now();
+    
+    // Navigate to the page - use 'domcontentloaded' instead of 'networkidle' for faster loading
+    // domcontentloaded fires when DOM is ready, without waiting for all resources
     await page.goto(config.TARGET_URL, {
-      waitUntil: 'networkidle',
-      timeout: 15000,
+      waitUntil: 'domcontentloaded',
+      timeout: 30000, // Increased timeout to 30 seconds
     });
+    
+    // DEBUG: Log navigation time
+    const navDuration = Date.now() - navStartTime;
+    if (config.DEBUG_MODE) {
+      console.log(`[Scraper] Page navigation completed in ${navDuration}ms`);
+    }
 
     if (config.DEBUG_MODE) {
       console.log('[Scraper] Page loaded, waiting for products to render...');
     }
 
-    // Wait a bit for JavaScript to render products
-    await page.waitForTimeout(2000);
-
+    // DEBUG: Wait for JavaScript to render products with monitoring
+    const renderStartTime = Date.now();
+    await page.waitForTimeout(3000); // Increased wait time for JS rendering
+    const renderDuration = Date.now() - renderStartTime;
+    
     if (config.DEBUG_MODE) {
+      console.log(`[Scraper] JS rendering wait completed in ${renderDuration}ms`);
       console.log('[Scraper] Extracting products from rendered DOM...');
     }
 
-    // Extract products using page.evaluate (runs in browser context)
+    // DEBUG: Extract products using page.evaluate (runs in browser context)
+    const evalStartTime = Date.now();
     const products: Product[] = await page.evaluate(() => {
       const productList: Product[] = [];
       
-      // Try to find product containers
+      // DEBUG: Try to find product containers and log selector attempts
       let productElements = document.querySelectorAll('.gridSlider__products');
+      console.log(`[Eval] Selector '.gridSlider__products' found: ${productElements.length} elements`);
       
       if (productElements.length === 0) {
-        // Try alternative selectors
+        // DEBUG: Try alternative selectors
         productElements = document.querySelectorAll('[class*="product"]');
+        console.log(`[Eval] Selector '[class*="product"]' found: ${productElements.length} elements`);
       }
       
       if (productElements.length === 0) {
-        // Try swiper slides with product data
+        // DEBUG: Try swiper slides with product data
         productElements = document.querySelectorAll('.swiper-slide');
+        console.log(`[Eval] Selector '.swiper-slide' found: ${productElements.length} elements`);
       }
+      
+      console.log(`[Eval] Total product elements to process: ${productElements.length}`);
 
       for (const prod of Array.from(productElements)) {
         try {
@@ -105,15 +124,26 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
 
       return productList;
     });
-
-    if (config.DEBUG_MODE && products.length > 0) {
+    
+    // DEBUG: Log extraction performance
+    const evalDuration = Date.now() - evalStartTime;
+    if (config.DEBUG_MODE) {
+      console.log(`[Scraper] DOM evaluation completed in ${evalDuration}ms`);
       console.log(`[Scraper] Extracted ${products.length} products`);
-      console.log(`[Scraper] Sample product: ${JSON.stringify(products[0], null, 2)}`);
+      if (products.length > 0) {
+        console.log(`[Scraper] Sample product: ${JSON.stringify(products[0], null, 2)}`);
+      }
     }
 
     return products;
   } catch (err) {
-    console.error('[Scraper] Error extracting products:', err);
+    // DEBUG: Log detailed error information for troubleshooting
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorStack = err instanceof Error ? err.stack : 'No stack trace';
+    console.error('[Scraper] Error extracting products:', errorMsg);
+    if (config.DEBUG_MODE) {
+      console.error('[Scraper] Error details:', errorStack);
+    }
     return [];
   }
 };
@@ -202,51 +232,105 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     // Infinite scraping loop
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      try {
-        if (config.DEBUG_MODE) {
-          console.log('\n📤 Scraping roobai.com...');
+      let retries = 0;
+      const maxRetries = 3;
+      let products: Product[] = [];
+
+      // Retry logic for scraping
+      while (retries < maxRetries && products.length === 0) {
+        try {
+          if (config.DEBUG_MODE) {
+            if (retries === 0) {
+              console.log('\n📤 Scraping roobai.com...');
+            } else {
+              console.log(`\n📤 Retrying scrape (attempt ${retries + 1}/${maxRetries})...`);
+            }
+          }
+
+          // Extract products from the website
+          products = await extractProducts(page);
+
+          if (config.DEBUG_MODE) {
+            console.log(`[Scraper] Total extracted: ${products.length}`);
+          }
+
+          // If we got products or have tried max retries, break
+          if (products.length > 0) {
+            break;
+          }
+
+          // If no products found and retries left, wait and retry
+          if (retries < maxRetries - 1) {
+            console.log('[Scraper] No products found, retrying in 3 seconds...');
+            await wait(3000);
+            retries++;
+          } else {
+            break;
+          }
+        } catch (err) {
+          // DEBUG: Log error details with timestamp
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          console.error(`[Scraper] Error in scrape attempt ${retries + 1}: ${errorMsg}`);
+          if (config.DEBUG_MODE && err instanceof Error) {
+            console.error(`[Scraper] Stack trace:`, err.stack);
+          }
+          retries++;
+          
+          if (retries < maxRetries) {
+            console.log(`[Scraper] Retrying in 5 seconds...`);
+            await wait(5000);
+          }
         }
+      }
 
-        // Extract products from the website
-        const products = await extractProducts(page);
-
-        if (config.DEBUG_MODE) {
-          console.log(`[Scraper] Total extracted: ${products.length}`);
-        }
-
-        // Filter products based on discount and keywords
+        // DEBUG: Filter products based on discount and keywords
         const notifyProducts = products.filter((p) => shouldNotifyProduct(p));
 
         if (config.DEBUG_MODE) {
-          console.log(`[Scraper] Pass filter: ${notifyProducts.length}`);
+          console.log(`[Scraper] Products to notify: ${notifyProducts.length}/${products.length}`);
         }
 
-        // Send messages for new products
+        // DEBUG: Send messages for new products with tracking
+        let sentCount = 0;
         for (const product of notifyProducts) {
           const productKey = `${product.title}-${product.discountPercent}`;
 
           if (!sentProducts.has(productKey)) {
             try {
+              if (config.DEBUG_MODE) {
+                console.log(`[Message] Preparing to send: ${product.title}`);
+              }
               const message = formatProductMessage(product);
 
-              // Try to send with image
+              // DEBUG: Try to send with image and track result
               if (product.imageUrl && product.imageUrl !== 'N/A') {
                 try {
+                  if (config.DEBUG_MODE) {
+                    console.log(`[Message] Loading image from: ${product.imageUrl}`);
+                  }
                   const media = await MessageMedia.fromUrl(product.imageUrl);
                   await whatsappClient.sendMessage(
                     config.WHATSAPP_PHONE_NUMBER,
                     media,
                     { caption: message }
                   );
+                  sentCount++;
                   console.log(`✓ Sent with image: ${product.title}`);
                 } catch (imgErr) {
-                  // Fallback to text-only if image fails
+                  // DEBUG: Fallback to text-only if image fails
+                  const imgErrMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
+                  console.warn(`[Message] Image load failed, falling back to text: ${imgErrMsg}`);
                   await whatsappClient.sendMessage(config.WHATSAPP_PHONE_NUMBER, message);
+                  sentCount++;
                   console.log(`✓ Sent (text): ${product.title}`);
                 }
               } else {
-                // Send text-only message
+                // DEBUG: Send text-only message (no image URL)
+                if (config.DEBUG_MODE) {
+                  console.log(`[Message] No image available, sending text only`);
+                }
                 await whatsappClient.sendMessage(config.WHATSAPP_PHONE_NUMBER, message);
+                sentCount++;
                 console.log(`✓ Sent (text): ${product.title}`);
               }
 
@@ -256,9 +340,19 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
               // Wait between messages to avoid rate limiting
               await wait(1500);
             } catch (err) {
-              console.error(`✗ Error sending message for ${product.title}:`, err);
+              // DEBUG: Log message sending errors with full details
+              const msgErrMsg = err instanceof Error ? err.message : String(err);
+              console.error(`✗ Error sending message for ${product.title}: ${msgErrMsg}`);
+              if (config.DEBUG_MODE && err instanceof Error) {
+                console.error(`[Message] Error details:`, err.stack);
+              }
             }
           }
+        }
+        
+        // DEBUG: Log cycle summary
+        if (config.DEBUG_MODE) {
+          console.log(`[Scraper] Cycle Summary: Checked ${products.length} products, Filtered ${notifyProducts.length}, Sent ${sentCount} messages`);
         }
 
         // Wait for next scrape cycle
@@ -268,16 +362,28 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
 
         await wait(config.SCRAPE_INTERVAL);
       } catch (err) {
-        console.error('[Scraper] Error in main loop:', err);
-        console.log('⏳ Retrying in 5 seconds...');
+        // DEBUG: Log uncaught errors in main loop
+        const loopErrMsg = err instanceof Error ? err.message : String(err);
+        console.error('[Scraper] Unexpected error in main loop:', loopErrMsg);
+        if (config.DEBUG_MODE && err instanceof Error) {
+          console.error('[Scraper] Stack trace:', err.stack);
+        }
+        console.log('⏳ Retrying main loop in 5 seconds...');
         await wait(5000);
       }
     }
   } catch (err) {
-    console.error('[Scraper] Fatal error:', err);
+    // DEBUG: Log fatal errors with complete context
+    const fatalErrMsg = err instanceof Error ? err.message : String(err);
+    console.error('[Scraper] FATAL ERROR - Shutting down:', fatalErrMsg);
+    if (config.DEBUG_MODE && err instanceof Error) {
+      console.error('[Scraper] Full error details:', err.stack);
+    }
     if (browser) {
+      console.log('[Scraper] Closing browser...');
       await browser.close();
     }
+    console.log('[Scraper] Process exiting with code 1');
     process.exit(1);
   }
 };
