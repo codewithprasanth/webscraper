@@ -1,6 +1,10 @@
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import { config } from './config';
+
+// Store current QR code as data URL for HTTP endpoint (production only)
+export let currentQRImage: string | null = null;
 
 const initWhatsapp = async (): Promise<Client> => {
   // Free tier: session stored in .wwebjs_auth (git-backed)
@@ -14,11 +18,40 @@ const initWhatsapp = async (): Promise<Client> => {
   });
 
   // QR Code event
-  whatsappClient.on('qr', (qr: string) => {
+  whatsappClient.on('qr', async (qr: string) => {
     console.log('\n========================================');
-    console.log('QR CODE RECEIVED - Scan with WhatsApp');
+    console.log('📱 QR CODE RECEIVED');
+    
+    // In production (Render), direct to HTTP endpoint
+    if (process.env.NODE_ENV === 'production') {
+      const renderUrl = process.env.RENDER_EXTERNAL_URL || 'https://your-app.onrender.com';
+      console.log(`Scan QR at: ${renderUrl}/qr`);
+    } else {
+      console.log('Scan with WhatsApp (see QR code below)');
+    }
+    
     console.log('========================================\n');
+    
+    // Display in console (useful for development)
     qrcode.generate(qr, { small: true });
+    
+    // For production: generate QR image and store in memory for HTTP endpoint
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        currentQRImage = await QRCode.toDataURL(qr, {
+          errorCorrectionLevel: 'H',
+          type: 'image/png',
+          width: 500,
+          margin: 2,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF',
+          },
+        });
+      } catch (err) {
+        console.error('Error generating QR image:', err);
+      }
+    }
   });
 
   // Message handler for commands
