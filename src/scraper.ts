@@ -61,6 +61,28 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
     
     if (config.DEBUG_MODE) {
       console.log(`[Scraper] JS rendering wait completed in ${renderDuration}ms`);
+      console.log('[Scraper] Waiting for images to load...');
+    }
+
+    // Wait for images to load before extraction
+    try {
+      await page.waitForFunction(
+        () => {
+          const images = document.querySelectorAll('.img-res-thumb');
+          return images.length > 0 && Array.from(images).every((img: any) => img.complete);
+        },
+        { timeout: 10000 }
+      );
+      if (config.DEBUG_MODE) {
+        console.log('[Scraper] Images loaded successfully');
+      }
+    } catch (imgWaitErr) {
+      if (config.DEBUG_MODE) {
+        console.warn('[Scraper] Image loading timeout - proceeding anyway');
+      }
+    }
+
+    if (config.DEBUG_MODE) {
       console.log('[Scraper] Extracting products from rendered DOM...');
     }
 
@@ -115,6 +137,7 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
 
           // Extract image from .img-res-thumb (within the parent product container)
           const imgEl = (prod as Element).querySelector('.img-res-thumb') as HTMLImageElement;
+          // Get the src attribute directly - this is the actual CDN image before fallback
           const imageUrl = imgEl?.src || imgEl?.dataset.src || 'N/A';
 
           // Only add products with valid title and discount > 0
@@ -207,10 +230,73 @@ const formatProductMessage = (product: Product): string => {
 🔗 *URL:* ${product.url}`;
 };
 
+// Helper function to download image using Playwright HTTP
+const downloadImageAsBase64 = async (imageUrl: string): Promise<string | null> => {
+  let response = null;
+  let buffer = null;
+  
+  try {
+    // Use Node.js Buffer to handle the image download
+    response = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'Referer': 'https://roobai.com/',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+
+    if (!response.ok || response.status !== 200) {
+      return null;
+    }
+
+    // Get the image as a buffer
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength === 0) {
+      return null;
+    }
+
+    // Check image size (limit to 5MB to prevent memory bloat)
+    if (arrayBuffer.byteLength > 5 * 1024 * 1024) {
+      if (config.DEBUG_MODE) {
+        console.warn(`[Image] Image too large: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB`);
+      }
+      return null;
+    }
+
+    // Convert to base64
+    buffer = Buffer.from(arrayBuffer);
+    const base64 = buffer.toString('base64');
+    
+    return base64;
+  } catch (err) {
+    return null;
+  } finally {
+    // Explicitly clear references for garbage collection
+    buffer = null;
+    response = null;
+  }
+};
+
 export const scrap = async (whatsappClient: Client): Promise<void> => {
-  const sentProducts = new Set<string>();
+  const sentProducts = new Map<string, number>(); // Track product and timestamp instead of just Set
   let browser: Browser | null = null;
   let page: Page | null = null;
+  
+  // Cleanup old sent products after 24 hours to prevent memory leak
+  const PRODUCT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const cleanupSentProducts = () => {
+    const now = Date.now();
+    for (const [key, timestamp] of sentProducts.entries()) {
+      if (now - timestamp > PRODUCT_RETENTION_MS) {
+        sentProducts.delete(key);
+        if (config.DEBUG_MODE) {
+          console.log(`[Memory] Cleaned up old product entry: ${key}`);
+        }
+      }
+    }
+  };
 
   console.log('🚀 Scraper started with Playwright (lightweight browser)');
   console.log(`📍 Target URL: ${config.TARGET_URL}`);
@@ -252,13 +338,13 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
       console.log('[Scraper] Browser launched successfully');
     }
     
-    // Set up request interception to block heavy resources and speed up loading
+    // Set up request interception to block heavy resources but ALLOW images for extraction
     await page.route('**/*', (route) => {
       const request = route.request();
       const resourceType = request.resourceType();
       
-      // Block images, stylesheets, fonts, and media to speed up page load
-      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+      // Block stylesheets, fonts, and media to speed up page load, but ALLOW images
+      if (['stylesheet', 'font', 'media'].includes(resourceType)) {
         route.abort();
       } else if (
         request.url().includes('google-analytics') ||
@@ -351,12 +437,12 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
         // Clear storage to avoid stale state
         await page.context().clearCookies();
         
-        // Set up request interception again for new page
+        // Set up request interception again for new page - allow images for extraction
         await page.route('**/*', (route) => {
           const request = route.request();
           const resourceType = request.resourceType();
           
-          if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+          if (['stylesheet', 'font', 'media'].includes(resourceType)) {
             route.abort();
           } else if (
             request.url().includes('google-analytics') ||
@@ -435,6 +521,10 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
 
         // DEBUG: Send messages for new products with tracking
         let sentCount = 0;
+        
+        // Run cleanup before processing products
+        cleanupSentProducts();
+        
         for (const product of notifyProducts) {
           const productKey = `${product.title}-${product.discountPercent}`;
 
@@ -452,19 +542,37 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                   if (config.DEBUG_MODE) {
                     console.log(`[Message] Downloading image from: ${product.imageUrl}`);
                   }
-                  const response = await fetch(product.imageUrl, { timeout: 15000 } as any);
-                  if (response.ok) {
-                    const buffer = await response.arrayBuffer();
-                    const base64 = Buffer.from(buffer).toString('base64');
-                    const media = new MessageMedia('image/jpeg', base64);
-                    await whatsappClient.sendMessage(
-                      config.WHATSAPP_PHONE_NUMBER,
-                      media,
-                      { caption: message }
-                    );
-                    imageSent = true;
-                    sentCount++;
-                    console.log(`✓ Sent with image: ${product.title}`);
+                  
+                  // Download image directly without Playwright page context
+                  let base64Image: string | null = null;
+                  try {
+                    base64Image = await downloadImageAsBase64(product.imageUrl);
+                  } catch (downloadErr) {
+                    if (config.DEBUG_MODE) {
+                      const downloadMsg = downloadErr instanceof Error ? downloadErr.message : String(downloadErr);
+                      console.warn(`[Message] Download error: ${downloadMsg}`);
+                    }
+                  }
+                  
+                  if (base64Image && base64Image.length > 0) {
+                    try {
+                      const media = new MessageMedia('image/jpeg', base64Image);
+                      await whatsappClient.sendMessage(
+                        config.WHATSAPP_PHONE_NUMBER,
+                        media,
+                        { caption: message }
+                      );
+                      imageSent = true;
+                      sentCount++;
+                      console.log(`✓ Sent with image: ${product.title}`);
+                    } finally {
+                      // Clear base64 from memory immediately
+                      base64Image = null;
+                    }
+                  } else {
+                    if (config.DEBUG_MODE) {
+                      console.warn(`[Message] Failed to download image from: ${product.imageUrl}`);
+                    }
                   }
                 } catch (imgErr) {
                   const imgErrMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
@@ -481,8 +589,8 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                 console.log(`✓ Sent (text): ${product.title}`);
               }
 
-              // Add to sent products
-              sentProducts.add(productKey);
+              // Add to sent products with timestamp
+              sentProducts.set(productKey, Date.now());
 
               // Wait between messages to avoid rate limiting
               await wait(1500);
@@ -500,6 +608,13 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
         // DEBUG: Log cycle summary
         if (config.DEBUG_MODE) {
           console.log(`[Scraper] Cycle Summary: Checked ${products.length} products, Filtered ${notifyProducts.length}, Sent ${sentCount} messages`);
+          
+          // Log memory usage if available
+          if (global.gc) {
+            global.gc(); // Manual garbage collection if enabled with --expose-gc
+            const memUsage = process.memoryUsage();
+            console.log(`[Memory] Heap: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB`);
+          }
         }
 
         // Wait for next scrape cycle
