@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev src/index.ts",
-    "postinstall": "npx playwright install chromium"
+    "postinstall": "PLAYWRIGHT_BROWSERS_PATH=node_modules/.browsers npx playwright install chromium"
   },
   "dependencies": {
     "dotenv": "^16.3.1",

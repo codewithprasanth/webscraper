@@ -5,10 +5,11 @@ services:
     plan: free
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm run start
-    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: node_modules/.browsers
       - key: DEBUG_MODE
         value: false
       - key: WHATSAPP_PHONE_NUMBER
