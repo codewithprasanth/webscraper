@@ -232,56 +232,57 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     // Infinite scraping loop
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      let retries = 0;
-      const maxRetries = 3;
-      let products: Product[] = [];
+      try {
+        let retries = 0;
+        const maxRetries = 3;
+        let products: Product[] = [];
 
-      // Retry logic for scraping
-      while (retries < maxRetries && products.length === 0) {
-        try {
-          if (config.DEBUG_MODE) {
-            if (retries === 0) {
-              console.log('\n📤 Scraping roobai.com...');
+        // Retry logic for scraping
+        while (retries < maxRetries && products.length === 0) {
+          try {
+            if (config.DEBUG_MODE) {
+              if (retries === 0) {
+                console.log('\n📤 Scraping roobai.com...');
+              } else {
+                console.log(`\n📤 Retrying scrape (attempt ${retries + 1}/${maxRetries})...`);
+              }
+            }
+
+            // Extract products from the website
+            products = await extractProducts(page);
+
+            if (config.DEBUG_MODE) {
+              console.log(`[Scraper] Total extracted: ${products.length}`);
+            }
+
+            // If we got products or have tried max retries, break
+            if (products.length > 0) {
+              break;
+            }
+
+            // If no products found and retries left, wait and retry
+            if (retries < maxRetries - 1) {
+              console.log('[Scraper] No products found, retrying in 3 seconds...');
+              await wait(3000);
+              retries++;
             } else {
-              console.log(`\n📤 Retrying scrape (attempt ${retries + 1}/${maxRetries})...`);
+              break;
+            }
+          } catch (err) {
+            // DEBUG: Log error details with timestamp
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[Scraper] Error in scrape attempt ${retries + 1}: ${errorMsg}`);
+            if (config.DEBUG_MODE && err instanceof Error) {
+              console.error(`[Scraper] Stack trace:`, err.stack);
+            }
+            retries++;
+            
+            if (retries < maxRetries) {
+              console.log(`[Scraper] Retrying in 5 seconds...`);
+              await wait(5000);
             }
           }
-
-          // Extract products from the website
-          products = await extractProducts(page);
-
-          if (config.DEBUG_MODE) {
-            console.log(`[Scraper] Total extracted: ${products.length}`);
-          }
-
-          // If we got products or have tried max retries, break
-          if (products.length > 0) {
-            break;
-          }
-
-          // If no products found and retries left, wait and retry
-          if (retries < maxRetries - 1) {
-            console.log('[Scraper] No products found, retrying in 3 seconds...');
-            await wait(3000);
-            retries++;
-          } else {
-            break;
-          }
-        } catch (err) {
-          // DEBUG: Log error details with timestamp
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          console.error(`[Scraper] Error in scrape attempt ${retries + 1}: ${errorMsg}`);
-          if (config.DEBUG_MODE && err instanceof Error) {
-            console.error(`[Scraper] Stack trace:`, err.stack);
-          }
-          retries++;
-          
-          if (retries < maxRetries) {
-            console.log(`[Scraper] Retrying in 5 seconds...`);
-            await wait(5000);
-          }
         }
-      }
 
         // DEBUG: Filter products based on discount and keywords
         const notifyProducts = products.filter((p) => shouldNotifyProduct(p));
