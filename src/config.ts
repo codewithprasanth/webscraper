@@ -12,7 +12,7 @@ export const config = {
   SCRAPE_INTERVAL: parseInt(process.env.SCRAPE_INTERVAL || '30000'), // 30 seconds in ms
   
   // Filter Configuration
-  MIN_DISCOUNT_PERCENTAGE: parseInt(process.env.MIN_DISCOUNT_PERCENTAGE || '8'),
+  MIN_DISCOUNT_PERCENTAGE: parseInt(process.env.MIN_DISCOUNT_PERCENTAGE || '80'),
   PRODUCT_KEYWORDS: (process.env.PRODUCT_KEYWORDS || '')
     .split(',')
     .map(k => k.trim())
