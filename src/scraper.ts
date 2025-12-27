@@ -293,9 +293,60 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
         }
       }
       
+      // FIX: Check if browser is still alive, relaunch if crashed
+      if (!browser) {
+        try {
+          if (config.DEBUG_MODE) {
+            console.log('[Scraper] Browser is closed or crashed, relaunching...');
+          }
+          
+          browser = await chromium.launch({
+            headless: true,
+            args: [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--disable-gpu',
+              '--single-process',
+              '--disable-blink-features=AutomationControlled',
+              '--disable-web-resources',
+              '--disable-background-networking',
+              '--disable-breakpad',
+              '--disable-client-side-phishing-detection',
+              '--disable-component-extensions-with-background-pages',
+              '--disable-default-apps',
+              '--disable-extensions',
+              '--disable-popup-blocking',
+              '--no-default-browser-check',
+              '--no-first-run',
+            ],
+          });
+          
+          if (config.DEBUG_MODE) {
+            console.log('[Scraper] Browser relaunched successfully');
+          }
+        } catch (launchErr) {
+          const launchErrMsg = launchErr instanceof Error ? launchErr.message : String(launchErr);
+          console.error('[Scraper] Failed to relaunch browser:', launchErrMsg);
+          console.log('⏳ Waiting 10 seconds before retry...');
+          await wait(10000);
+          continue;
+        }
+      }
+      
       try {
         // Create fresh page for this cycle
-        page = await browser.newPage();
+        try {
+          page = await browser.newPage();
+        } catch (pageErr) {
+          // If newPage fails, browser is likely dead
+          if (config.DEBUG_MODE) {
+            console.log('[Scraper] Failed to create new page, browser may be dead');
+          }
+          browser = null;
+          await wait(2000);
+          continue; // Skip to next iteration to relaunch browser
+        }
         
         // Clear storage to avoid stale state
         await page.context().clearCookies();
@@ -465,7 +516,7 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
           console.error('[Scraper] Stack trace:', err.stack);
         }
         
-        // FIX: Close page on error to prevent memory leak
+        // FIX: Close page on error to prevent memory leak and set browser to null if it's closed
         if (page) {
           try {
             await page.close();
@@ -474,6 +525,9 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
             page = null;
           }
         }
+        
+        // FIX: Browser may be dead, will be relaunched on next iteration if needed
+        browser = null;
         
         console.log('⏳ Retrying main loop in 5 seconds...');
         await wait(5000);
