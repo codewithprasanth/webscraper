@@ -1,3 +1,6 @@
+// Set Playwright browsers path BEFORE importing anything that uses Playwright
+process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || 'node_modules/.browsers';
+
 import initWhatsapp, { currentQRImage } from './main';
 import scrap from './scraper';
 import express, { Request, Response } from 'express';
