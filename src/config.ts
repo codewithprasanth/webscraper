@@ -4,7 +4,7 @@ dotenv.config();
 
 export const config = {
   // WhatsApp Configuration
-  WHATSAPP_PHONE_NUMBER: process.env.WHATSAPP_PHONE_NUMBER || '917200632341@c.us',
+  WHATSAPP_PHONE_NUMBER: (process.env.WHATSAPP_PHONE_NUMBERS || process.env.WHATSAPP_PHONE_NUMBER || '917200632341@c.us'),
   WHATSAPP_NOTIFICATION_START: process.env.WHATSAPP_NOTIFICATION_START === 'true',
   
   // Scraper Configuration

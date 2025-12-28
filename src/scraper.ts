@@ -1,6 +1,6 @@
 import { chromium, Browser, Page } from 'playwright';
 import { Client, MessageMedia } from 'whatsapp-web.js';
-import { config } from './config';
+import { getConfig } from './configManager';
 
 interface Product {
   title: string;
@@ -18,6 +18,7 @@ const wait = (msec: number): Promise<void> =>
 
 const extractProducts = async (page: Page): Promise<Product[]> => {
   try {
+    const config = getConfig();
     if (config.DEBUG_MODE) {
       console.log('[Scraper] Loading page with Playwright...');
     }
@@ -176,6 +177,7 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const errorStack = err instanceof Error ? err.stack : 'No stack trace';
     console.error('[Scraper] Error extracting products:', errorMsg);
+    const config = getConfig();
     if (config.DEBUG_MODE) {
       console.error('[Scraper] Error details:', errorStack);
     }
@@ -185,6 +187,7 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
 
 const shouldNotifyProduct = (product: Product): boolean => {
   const { title, discountPercent } = product;
+  const config = getConfig();
 
   if (config.DEBUG_MODE) {
     console.log(`[Filter] Checking: "${title}" (${discountPercent}%)`);
@@ -259,7 +262,8 @@ const downloadImageAsBase64 = async (imageUrl: string): Promise<string | null> =
 
     // Check image size (limit to 5MB to prevent memory bloat)
     if (arrayBuffer.byteLength > 5 * 1024 * 1024) {
-      if (config.DEBUG_MODE) {
+      const cfg = getConfig();
+      if (cfg.DEBUG_MODE) {
         console.warn(`[Image] Image too large: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB`);
       }
       return null;
@@ -291,7 +295,8 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     for (const [key, timestamp] of sentProducts.entries()) {
       if (now - timestamp > PRODUCT_RETENTION_MS) {
         sentProducts.delete(key);
-        if (config.DEBUG_MODE) {
+        const cfg = getConfig();
+        if (cfg.DEBUG_MODE) {
           console.log(`[Memory] Cleaned up old product entry: ${key}`);
         }
       }
@@ -299,14 +304,16 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
   };
 
   console.log('🚀 Scraper started with Playwright (lightweight browser)');
-  console.log(`📍 Target URL: ${config.TARGET_URL}`);
-  console.log(`⏱️  Scrape Interval: ${config.SCRAPE_INTERVAL}ms`);
-  console.log(`🎯 Min Discount: ${config.MIN_DISCOUNT_PERCENTAGE}%`);
-  console.log(`📱 WhatsApp Phone: ${config.WHATSAPP_PHONE_NUMBER}`);
+  
+  const cfg = getConfig();
+  console.log(`📍 Target URL: ${cfg.TARGET_URL}`);
+  console.log(`⏱️  Scrape Interval: ${cfg.SCRAPE_INTERVAL}ms`);
+  console.log(`🎯 Min Discount: ${cfg.MIN_DISCOUNT_PERCENTAGE}%`);
+  console.log(`📱 WhatsApp Phones (${cfg.WHATSAPP_PHONE_NUMBERS.length}): ${cfg.WHATSAPP_PHONE_NUMBERS.join(', ')}`);
 
   try {
     // Launch browser once and reuse
-    if (config.DEBUG_MODE) {
+    if (cfg.DEBUG_MODE) {
       console.log('[Scraper] Launching Playwright browser...');
     }
     
@@ -334,7 +341,7 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     
     page = await browser.newPage();
 
-    if (config.DEBUG_MODE) {
+    if (cfg.DEBUG_MODE) {
       console.log('[Scraper] Browser launched successfully');
     }
     
@@ -360,13 +367,15 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
       }
     });
 
-    if (config.DEBUG_MODE) {
+    if (cfg.DEBUG_MODE) {
       console.log('[Scraper] Request interception configured - blocking heavy resources');
     }
 
     // Infinite scraping loop
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      const config = getConfig(); // Get fresh config each cycle
+      
       // FIX: Close old page and create fresh one to avoid stale state and memory leaks
       if (page) {
         try {
@@ -556,15 +565,31 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                   
                   if (base64Image && base64Image.length > 0) {
                     try {
-                      const media = new MessageMedia('image/jpeg', base64Image);
-                      await whatsappClient.sendMessage(
-                        config.WHATSAPP_PHONE_NUMBER,
-                        media,
-                        { caption: message }
-                      );
-                      imageSent = true;
-                      sentCount++;
-                      console.log(`✓ Sent with image: ${product.title}`);
+                      // Try to send with image to all configured phone numbers
+                      for (const phoneNumber of config.WHATSAPP_PHONE_NUMBERS) {
+                        try {
+                          const media = new MessageMedia('image/jpeg', base64Image);
+                          await whatsappClient.sendMessage(
+                            phoneNumber,
+                            media,
+                            { caption: message }
+                          );
+                          imageSent = true;
+                          sentCount++;
+                          console.log(`✓ Sent with image to ${phoneNumber}: ${product.title}`);
+                        } catch (sendImgErr) {
+                          if (config.DEBUG_MODE) {
+                            const sendImgMsg = sendImgErr instanceof Error ? sendImgErr.message : String(sendImgErr);
+                            console.warn(`[Message] Failed to send image to ${phoneNumber}: ${sendImgMsg}, will retry with text`);
+                          }
+                          // Continue to text-only fallback
+                        }
+                        
+                        // Wait between messages to different numbers
+                        if (imageSent) {
+                          await wait(500);
+                        }
+                      }
                     } finally {
                       // Clear base64 from memory immediately
                       base64Image = null;
@@ -577,16 +602,30 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                 } catch (imgErr) {
                   const imgErrMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
                   if (config.DEBUG_MODE) {
-                    console.warn(`[Message] Image error: ${imgErrMsg}`);
+                    console.warn(`[Message] Image processing error: ${imgErrMsg}`);
                   }
                 }
               }
               
-              // Send text if image was not sent
+              // Send text if image was not sent successfully
               if (!imageSent) {
-                await whatsappClient.sendMessage(config.WHATSAPP_PHONE_NUMBER, message);
-                sentCount++;
-                console.log(`✓ Sent (text): ${product.title}`);
+                // Send to all configured phone numbers
+                for (const phoneNumber of config.WHATSAPP_PHONE_NUMBERS) {
+                  try {
+                    await whatsappClient.sendMessage(phoneNumber, message);
+                    sentCount++;
+                    console.log(`✓ Sent (text) to ${phoneNumber}: ${product.title}`);
+                  } catch (textErr) {
+                    const textErrMsg = textErr instanceof Error ? textErr.message : String(textErr);
+                    console.error(`✗ Error sending text message to ${phoneNumber}: ${textErrMsg}`);
+                    if (config.DEBUG_MODE && textErr instanceof Error) {
+                      console.error(`[Message] Text send error details:`, textErr.stack);
+                    }
+                  }
+                  
+                  // Wait between messages to different numbers
+                  await wait(500);
+                }
               }
 
               // Add to sent products with timestamp
@@ -652,7 +691,8 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     // DEBUG: Log fatal errors with complete context
     const fatalErrMsg = err instanceof Error ? err.message : String(err);
     console.error('[Scraper] FATAL ERROR - Shutting down:', fatalErrMsg);
-    if (config.DEBUG_MODE && err instanceof Error) {
+    const cfg = getConfig();
+    if (cfg.DEBUG_MODE && err instanceof Error) {
       console.error('[Scraper] Full error details:', err.stack);
     }
     if (browser) {
