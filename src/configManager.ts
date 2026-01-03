@@ -15,10 +15,7 @@ export const runtimeConfig: RuntimeConfig = {
   MIN_DISCOUNT_PERCENTAGE: envConfig.MIN_DISCOUNT_PERCENTAGE,
   PRODUCT_KEYWORDS: envConfig.PRODUCT_KEYWORDS,
   SCRAPE_INTERVAL: envConfig.SCRAPE_INTERVAL,
-  WHATSAPP_PHONE_NUMBERS: envConfig.WHATSAPP_PHONE_NUMBER
-    .split(',')
-    .map(p => p.trim())
-    .filter(p => p.length > 0),
+  WHATSAPP_PHONE_NUMBERS: envConfig.WHATSAPP_PHONE_NUMBERS,
   TARGET_URL: envConfig.TARGET_URL,
   DEBUG_MODE: envConfig.DEBUG_MODE,
 };
@@ -178,10 +175,7 @@ export const resetConfig = (): RuntimeConfig => {
   runtimeConfig.MIN_DISCOUNT_PERCENTAGE = envConfig.MIN_DISCOUNT_PERCENTAGE;
   runtimeConfig.PRODUCT_KEYWORDS = envConfig.PRODUCT_KEYWORDS;
   runtimeConfig.SCRAPE_INTERVAL = envConfig.SCRAPE_INTERVAL;
-  runtimeConfig.WHATSAPP_PHONE_NUMBERS = envConfig.WHATSAPP_PHONE_NUMBER
-    .split(',')
-    .map(p => p.trim())
-    .filter(p => p.length > 0);
+  runtimeConfig.WHATSAPP_PHONE_NUMBERS = envConfig.WHATSAPP_PHONE_NUMBERS;
   runtimeConfig.TARGET_URL = envConfig.TARGET_URL;
   runtimeConfig.DEBUG_MODE = envConfig.DEBUG_MODE;
 

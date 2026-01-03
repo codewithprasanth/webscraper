@@ -94,21 +94,16 @@ const extractProducts = async (page: Page): Promise<Product[]> => {
       
       // DEBUG: Try to find product containers and log selector attempts
       let productElements = document.querySelectorAll('.gridSlider__products');
-      console.log(`[Eval] Selector '.gridSlider__products' found: ${productElements.length} elements`);
       
       if (productElements.length === 0) {
         // DEBUG: Try alternative selectors
         productElements = document.querySelectorAll('[class*="product"]');
-        console.log(`[Eval] Selector '[class*="product"]' found: ${productElements.length} elements`);
       }
       
       if (productElements.length === 0) {
         // DEBUG: Try swiper slides with product data
         productElements = document.querySelectorAll('.swiper-slide');
-        console.log(`[Eval] Selector '.swiper-slide' found: ${productElements.length} elements`);
       }
-      
-      console.log(`[Eval] Total product elements to process: ${productElements.length}`);
 
       for (const prod of Array.from(productElements)) {
         try {
@@ -235,10 +230,15 @@ const formatProductMessage = (product: Product): string => {
 
 // Helper function to download image using Playwright HTTP
 const downloadImageAsBase64 = async (imageUrl: string): Promise<string | null> => {
-  let response = null;
-  let buffer = null;
+  let response: any = null;
+  let buffer: any = null;
+  let abortController: AbortController | null = null;
   
   try {
+    // Create abort controller for timeout
+    abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController!.abort(), 10000); // 10 second timeout
+    
     // Use Node.js Buffer to handle the image download
     response = await fetch(imageUrl, {
       headers: {
@@ -248,7 +248,10 @@ const downloadImageAsBase64 = async (imageUrl: string): Promise<string | null> =
         'Accept-Encoding': 'gzip, deflate, br',
         'Accept-Language': 'en-US,en;q=0.9',
       },
+      signal: abortController.signal,
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok || response.status !== 200) {
       return null;
@@ -260,11 +263,11 @@ const downloadImageAsBase64 = async (imageUrl: string): Promise<string | null> =
       return null;
     }
 
-    // Check image size (limit to 5MB to prevent memory bloat)
-    if (arrayBuffer.byteLength > 5 * 1024 * 1024) {
+    // Check image size (limit to 2MB to prevent memory bloat on Render.com - REDUCED from 5MB)
+    if (arrayBuffer.byteLength > 2 * 1024 * 1024) {
       const cfg = getConfig();
       if (cfg.DEBUG_MODE) {
-        console.warn(`[Image] Image too large: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB`);
+        console.warn(`[Image] Image too large: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB, skipping`);
       }
       return null;
     }
@@ -275,41 +278,54 @@ const downloadImageAsBase64 = async (imageUrl: string): Promise<string | null> =
     
     return base64;
   } catch (err) {
+    if (getConfig().DEBUG_MODE) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.log(`[Image] Download failed: ${errMsg}`);
+    }
     return null;
   } finally {
-    // Explicitly clear references for garbage collection
+    // Explicitly clear references for garbage collection IMMEDIATELY
     buffer = null;
-    response = null;
+    abortController = null;
+    if (response) {
+      response = null;
+    }
   }
 };
 
 export const scrap = async (whatsappClient: Client): Promise<void> => {
-  const sentProducts = new Map<string, number>(); // Track product and timestamp instead of just Set
+  const sentProducts = new Map<string, number>(); // Track product and timestamp
   let browser: Browser | null = null;
   let page: Page | null = null;
+  let cycleCount = 0; // Track cycles for memory cleanup
   
-  // Cleanup old sent products after 24 hours to prevent memory leak
-  const PRODUCT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+  // Cleanup old sent products after 4 hours to prevent memory leak (more aggressive)
+  const PRODUCT_RETENTION_MS = 4 * 60 * 60 * 1000; // 4 hours
+  const CLEANUP_INTERVAL = 100; // Clean up every 100 cycles
+  
   const cleanupSentProducts = () => {
     const now = Date.now();
+    let deletedCount = 0;
     for (const [key, timestamp] of sentProducts.entries()) {
       if (now - timestamp > PRODUCT_RETENTION_MS) {
         sentProducts.delete(key);
-        const cfg = getConfig();
-        if (cfg.DEBUG_MODE) {
-          console.log(`[Memory] Cleaned up old product entry: ${key}`);
-        }
+        deletedCount++;
       }
+    }
+    const cfg = getConfig();
+    if (cfg.DEBUG_MODE && deletedCount > 0) {
+      console.log(`[Memory] Cleaned up ${deletedCount} old product entries. Map size: ${sentProducts.size}`);
     }
   };
 
-  console.log('🚀 Scraper started with Playwright (lightweight browser)');
-  
   const cfg = getConfig();
-  console.log(`📍 Target URL: ${cfg.TARGET_URL}`);
-  console.log(`⏱️  Scrape Interval: ${cfg.SCRAPE_INTERVAL}ms`);
-  console.log(`🎯 Min Discount: ${cfg.MIN_DISCOUNT_PERCENTAGE}%`);
-  console.log(`📱 WhatsApp Phones (${cfg.WHATSAPP_PHONE_NUMBERS.length}): ${cfg.WHATSAPP_PHONE_NUMBERS.join(', ')}`);
+  if (cfg.DEBUG_MODE) {
+    console.log('🚀 Scraper started with Playwright (lightweight browser)');
+    console.log(`📍 Target URL: ${cfg.TARGET_URL}`);
+    console.log(`⏱️  Scrape Interval: ${cfg.SCRAPE_INTERVAL}ms`);
+    console.log(`🎯 Min Discount: ${cfg.MIN_DISCOUNT_PERCENTAGE}%`);
+    console.log(`📱 WhatsApp Phones (${cfg.WHATSAPP_PHONE_NUMBERS.length}): ${cfg.WHATSAPP_PHONE_NUMBERS.join(', ')}`);
+  }
 
   try {
     // Launch browser once and reuse
@@ -375,15 +391,33 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const config = getConfig(); // Get fresh config each cycle
+      cycleCount++;
+      
+      // FIX: Periodically cleanup old products from memory (every 100 cycles)
+      if (cycleCount % CLEANUP_INTERVAL === 0) {
+        cleanupSentProducts();
+        // Force garbage collection if available (Node.js with --expose-gc)
+        if (global.gc) {
+          global.gc();
+          if (config.DEBUG_MODE) {
+            console.log('[Memory] Manual garbage collection triggered');
+          }
+        }
+      }
       
       // FIX: Close old page and create fresh one to avoid stale state and memory leaks
       if (page) {
         try {
+          // Remove all route handlers before closing to prevent memory leak
+          await page.unroute('**/*');
           await page.close();
+          // Force page to be garbage collected
+          page = null;
           if (config.DEBUG_MODE) {
-            console.log('[Scraper] Previous page closed to prevent memory leaks');
+            console.log('[Scraper] Previous page closed and cleared from memory');
           }
         } catch (e) {
+          page = null;
           // Ignore errors on close
         }
       }
@@ -535,7 +569,7 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
         cleanupSentProducts();
         
         for (const product of notifyProducts) {
-          const productKey = `${product.title}-${product.discountPercent}`;
+          const productKey = `${product.title.toLowerCase()}-${product.discountPercent}`;
 
           if (!sentProducts.has(productKey)) {
             try {
@@ -576,13 +610,14 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                           );
                           imageSent = true;
                           sentCount++;
-                          console.log(`✓ Sent with image to ${phoneNumber}: ${product.title}`);
+                          if (config.DEBUG_MODE) {
+                            console.log(`✓ Sent with image to ${phoneNumber}: ${product.title}`);
+                          }
                         } catch (sendImgErr) {
                           if (config.DEBUG_MODE) {
                             const sendImgMsg = sendImgErr instanceof Error ? sendImgErr.message : String(sendImgErr);
-                            console.warn(`[Message] Failed to send image to ${phoneNumber}: ${sendImgMsg}, will retry with text`);
+                            console.warn(`[Message] Failed to send image to ${phoneNumber}: ${sendImgMsg}`);
                           }
-                          // Continue to text-only fallback
                         }
                         
                         // Wait between messages to different numbers
@@ -591,8 +626,11 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                         }
                       }
                     } finally {
-                      // Clear base64 from memory immediately
+                      // CRITICAL: Clear base64 from memory immediately after use
                       base64Image = null;
+                      if (global.gc) {
+                        global.gc(); // Trigger GC if available
+                      }
                     }
                   } else {
                     if (config.DEBUG_MODE) {
@@ -614,7 +652,9 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
                   try {
                     await whatsappClient.sendMessage(phoneNumber, message);
                     sentCount++;
-                    console.log(`✓ Sent (text) to ${phoneNumber}: ${product.title}`);
+                    if (config.DEBUG_MODE) {
+                      console.log(`✓ Sent (text) to ${phoneNumber}: ${product.title}`);
+                    }
                   } catch (textErr) {
                     const textErrMsg = textErr instanceof Error ? textErr.message : String(textErr);
                     console.error(`✗ Error sending text message to ${phoneNumber}: ${textErrMsg}`);
@@ -644,7 +684,7 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
           }
         }
         
-        // DEBUG: Log cycle summary
+        // DEBUG: Log cycle summary only in debug mode
         if (config.DEBUG_MODE) {
           console.log(`[Scraper] Cycle Summary: Checked ${products.length} products, Filtered ${notifyProducts.length}, Sent ${sentCount} messages`);
           
@@ -652,7 +692,9 @@ export const scrap = async (whatsappClient: Client): Promise<void> => {
           if (global.gc) {
             global.gc(); // Manual garbage collection if enabled with --expose-gc
             const memUsage = process.memoryUsage();
-            console.log(`[Memory] Heap: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB`);
+            if (config.DEBUG_MODE) {
+              console.log(`[Memory] Heap: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB`);
+            }
           }
         }
 

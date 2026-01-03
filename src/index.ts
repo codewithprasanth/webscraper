@@ -1,4 +1,4 @@
-import initWhatsapp, { currentQRImage } from './main';
+import initWhatsapp, { currentQRImage, isWhatsAppReady } from './main';
 import scrap from './scraper';
 import express, { Request, Response } from 'express';
 import QRCode from 'qrcode';
@@ -389,6 +389,53 @@ app.get('/config-dashboard', (req: Request, res: Response) => {
 // QR Code endpoint (production only - for Render deployment)
 if (process.env.NODE_ENV === 'production') {
   app.get('/qr', async (req: Request, res: Response) => {
+    // If WhatsApp is already ready, don't show QR code
+    if (isWhatsAppReady) {
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>WhatsApp Scraper - Ready</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              margin: 0;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .container {
+              background: white;
+              padding: 40px;
+              border-radius: 10px;
+              box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+              text-align: center;
+              max-width: 500px;
+            }
+            h1 {
+              color: #28a745;
+              margin-bottom: 10px;
+            }
+            p {
+              color: #666;
+              font-size: 16px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>✓ WhatsApp Scraper Running</h1>
+            <p>WhatsApp client is authenticated and running.</p>
+            <p>Scraper is monitoring for offers...</p>
+          </div>
+        </body>
+        </html>
+      `);
+      return;
+    }
+
     if (currentQRImage) {
       res.send(`
         <!DOCTYPE html>
@@ -529,9 +576,7 @@ app.listen(PORT, () => {
 
     // Start scraping when WhatsApp client is ready
     whatsappClient.on('ready', async () => {
-      console.log('\n========================================');
-      console.log('Starting web scraper...');
-      console.log('========================================\n');
+      console.log('✓ Service started');
       
       // Run scraper in background
       scrap(whatsappClient).catch((error) => {

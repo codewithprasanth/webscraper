@@ -5,6 +5,8 @@ import { config } from './config';
 
 // Store current QR code as data URL for HTTP endpoint (production only)
 export let currentQRImage: string | null = null;
+// Track if WhatsApp client is ready (to hide QR after initialization)
+export let isWhatsAppReady: boolean = false;
 
 const initWhatsapp = async (): Promise<Client> => {
   // Free tier: session stored in .wwebjs_auth (git-backed)
@@ -68,11 +70,22 @@ const initWhatsapp = async (): Promise<Client> => {
   // Client ready event
   whatsappClient.on('ready', () => {
     console.log('✓ WhatsApp client is ready!');
+    isWhatsAppReady = true; // Mark client as initialized
+    currentQRImage = null; // Clear QR code since it's no longer needed
     if (config.WHATSAPP_NOTIFICATION_START) {
-      whatsappClient.sendMessage(
-        config.WHATSAPP_PHONE_NUMBER,
-        'Roobai Web Scraper Started - Monitoring for offers!'
-      ).catch(err => console.error('Failed to send start notification:', err));
+      // Add a small delay to ensure client is fully ready for message sending
+      setTimeout(() => {
+        const phoneNumbers = config.WHATSAPP_PHONE_NUMBERS || [];
+        if (phoneNumbers.length > 0) {
+          const firstPhone = phoneNumbers[0];
+          whatsappClient.sendMessage(
+            firstPhone,
+            'Roobai Web Scraper Started - Monitoring for offers!'
+          ).catch(err => console.error('Failed to send start notification:', err));
+        } else {
+          console.warn('[Warning] No WhatsApp phone numbers configured for start notification');
+        }
+      }, 2000); // Wait 2 seconds after ready event
     }
   });
 
